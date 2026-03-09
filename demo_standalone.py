@@ -162,6 +162,11 @@ async def run_voice_demo():
     def _vad_prob(chunk: np.ndarray, sample_rate: int) -> float:
         """Run one chunk through Silero VAD, return speech probability."""
         global _vad_state
+        # Normalise to target RMS so VAD works regardless of mic gain level
+        rms = np.sqrt(np.mean(chunk ** 2))
+        if rms > 1e-6:
+            chunk = chunk * (0.1 / rms)
+        chunk = np.clip(chunk, -1.0, 1.0)
         x = chunk.reshape(1, -1).astype(np.float32)
         sr_arr = np.array(sample_rate, dtype=np.int64)
         out, state_out = vad_session.run(
@@ -174,7 +179,7 @@ async def run_voice_demo():
     def record_audio(
         sample_rate: int = 16000,
         chunk_samples: int = 512,        # 32 ms per chunk at 16 kHz
-        speech_threshold: float = 0.5,
+        speech_threshold: float = 0.4,
         silence_after_speech: float = 0.8,  # seconds of quiet to stop
         max_duration: float = 15.0,
         pre_speech_buffer: int = 8,      # chunks to keep before speech starts
