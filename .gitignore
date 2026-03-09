@@ -27,3 +27,7 @@ logs/
 .vscode/
 .idea/
 *.swp
+
+# Kokoro TTS model files (large binaries — download via GitHub releases)
+*.onnx
+*.bin

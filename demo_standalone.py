@@ -42,7 +42,7 @@ Current date: you are calling today."""
 
 # ─── OLLAMA LLM ───────────────────────────────────────────────────────────────
 
-async def chat_with_ollama(messages: list, model: str = "llama3.1:8b") -> str:
+async def chat_with_ollama(messages: list, model: str = "llama3:latest") -> str:
     """Send messages to local Ollama and get response."""
     async with aiohttp.ClientSession() as session:
         payload = {
@@ -126,12 +126,12 @@ async def run_voice_demo():
         import numpy as np
         from faster_whisper import WhisperModel
         import soundfile as sf
-        import subprocess
         import tempfile
         import os
+        from kokoro_onnx import Kokoro
     except ImportError as e:
         print(f"\n❌ Missing package for voice mode: {e}")
-        print("Install with: pip install faster-whisper sounddevice numpy soundfile")
+        print("Install with: pip install faster-whisper sounddevice numpy soundfile kokoro-onnx")
         print("Falling back to text mode...\n")
         await run_text_demo()
         return
@@ -143,7 +143,13 @@ async def run_voice_demo():
 
     print("⏳ Loading Whisper speech recognition model (first time takes ~30 seconds)...")
     whisper_model = WhisperModel("base.en", device="cpu", compute_type="int8")
-    print("✅ Whisper loaded!\n")
+    print("✅ Whisper loaded!")
+
+    print("⏳ Loading Kokoro TTS voice model...")
+    import pathlib
+    _base = pathlib.Path(__file__).parent
+    kokoro_model = Kokoro(str(_base / "kokoro-v1.0.int8.onnx"), str(_base / "voices-v1.0.bin"))
+    print("✅ Kokoro TTS loaded!\n")
 
     def record_audio(duration=5, sample_rate=16000):
         """Record audio from microphone."""
@@ -162,12 +168,13 @@ async def run_voice_demo():
             return " ".join(seg.text for seg in segments).strip()
 
     def speak_text(text):
-        """Convert text to speech using piper or say (macOS fallback)."""
+        """Convert text to speech using Kokoro neural TTS (af_sarah voice)."""
         try:
-            # Try macOS built-in 'say' command first (always works on Mac)
-            subprocess.run(["say", "-v", "Samantha", text], check=True)
-        except Exception:
-            print(f"[TTS fallback] {text}")
+            samples, sample_rate = kokoro_model.create(text, voice="af_sarah", speed=1.0, lang="en-us")
+            sd.play(samples, sample_rate)
+            sd.wait()
+        except Exception as e:
+            print(f"[TTS error] {e}")
 
     conversation = [{"role": "system", "content": SYSTEM_PROMPT}]
 
