@@ -159,42 +159,24 @@ async def run_voice_demo():
     # VAD state — reset before each recording
     _vad_state = np.zeros((2, 1, 128), dtype=np.float32)
 
-    def _vad_prob(chunk: np.ndarray, sample_rate: int) -> float:
-        """Run one chunk through Silero VAD, return speech probability."""
-        global _vad_state
-        # Normalise to target RMS so VAD works regardless of mic gain level
-        rms = np.sqrt(np.mean(chunk ** 2))
-        if rms > 1e-6:
-            chunk = chunk * (0.1 / rms)
-        chunk = np.clip(chunk, -1.0, 1.0)
-        x = chunk.reshape(1, -1).astype(np.float32)
-        sr_arr = np.array(sample_rate, dtype=np.int64)
-        out, state_out = vad_session.run(
-            None,
-            {"input": x, "state": _vad_state, "sr": sr_arr}
-        )
-        _vad_state = state_out
-        return float(out.squeeze())
-
     def record_audio(
         sample_rate: int = 16000,
-        chunk_samples: int = 512,        # 32 ms per chunk at 16 kHz
-        speech_threshold: float = 0.4,
-        silence_after_speech: float = 0.8,  # seconds of quiet to stop
+        chunk_samples: int = 512,
+        silence_after_speech: float = 1.0,  # seconds of silence to stop
         max_duration: float = 15.0,
-        pre_speech_buffer: int = 8,      # chunks to keep before speech starts
+        min_speech_chunks: int = 3,         # ignore sub-100ms blips
     ):
-        """Record until the caller stops speaking (Silero VAD turn-taking)."""
+        """Record audio — starts immediately, stops when silence detected via energy VAD."""
         global _vad_state
         _vad_state = np.zeros((2, 1, 128), dtype=np.float32)
 
         silence_chunks_needed = int(silence_after_speech * sample_rate / chunk_samples)
         max_chunks = int(max_duration * sample_rate / chunk_samples)
 
-        ring_buffer = []      # pre-speech audio kept as a look-back window
-        speech_buffer = []    # confirmed speech audio
-        speech_started = False
+        all_chunks = []       # everything recorded
+        speech_chunk_count = 0
         silence_count = 0
+        speech_started = False
 
         print("🎤 Listening...")
 
@@ -203,32 +185,27 @@ async def run_voice_demo():
             for _ in range(max_chunks):
                 chunk, _ = stream.read(chunk_samples)
                 chunk_1d = chunk.flatten()
-                prob = _vad_prob(chunk_1d, sample_rate)
+                all_chunks.append(chunk_1d)
 
-                if not speech_started:
-                    ring_buffer.append(chunk_1d)
-                    if len(ring_buffer) > pre_speech_buffer:
-                        ring_buffer.pop(0)
-                    if prob >= speech_threshold:
+                # Energy-based speech detection
+                rms = float(np.sqrt(np.mean(chunk_1d ** 2)))
+                is_speech = rms > 0.005
+
+                if is_speech:
+                    if not speech_started:
                         print("🗣️  Speaking...", end="\r")
                         speech_started = True
-                        speech_buffer.extend(ring_buffer)
-                        speech_buffer.append(chunk_1d)
-                        ring_buffer.clear()
-                        silence_count = 0
-                else:
-                    speech_buffer.append(chunk_1d)
-                    if prob < speech_threshold:
-                        silence_count += 1
-                        if silence_count >= silence_chunks_needed:
-                            break
-                    else:
-                        silence_count = 0
+                    speech_chunk_count += 1
+                    silence_count = 0
+                elif speech_started:
+                    silence_count += 1
+                    if silence_count >= silence_chunks_needed:
+                        break
 
-        if not speech_buffer:
+        if speech_chunk_count < min_speech_chunks:
             return np.array([], dtype=np.float32), sample_rate
 
-        return np.concatenate(speech_buffer), sample_rate
+        return np.concatenate(all_chunks), sample_rate
 
     def transcribe_audio(audio, sample_rate):
         """Convert speech to text using Whisper."""
