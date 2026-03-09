@@ -1,0 +1,22 @@
+# CxBolt Voice Bot — Python Dependencies
+
+# Core async HTTP (for Ollama API calls)
+aiohttp>=3.9.0
+
+# Environment variables
+python-dotenv>=1.0.0
+
+# ── VOICE MODE (text demo doesn't need these) ──
+# Speech-to-text (open source Whisper)
+faster-whisper>=1.0.0
+
+# Audio recording/playback
+sounddevice>=0.4.6
+numpy>=1.24.0
+soundfile>=0.12.1
+
+# ── LIVEKIT AGENT MODE (full production) ──
+# LiveKit Agents framework
+livekit-agents>=0.12.0
+livekit-plugins-silero>=0.7.0
+livekit-plugins-openai>=0.10.0
