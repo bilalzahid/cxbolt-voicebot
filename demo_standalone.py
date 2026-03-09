@@ -147,17 +147,83 @@ async def run_voice_demo():
 
     print("⏳ Loading Kokoro TTS voice model...")
     import pathlib
+    import onnxruntime as rt
     _base = pathlib.Path(__file__).parent
     kokoro_model = Kokoro(str(_base / "kokoro-v1.0.int8.onnx"), str(_base / "voices-v1.0.bin"))
-    print("✅ Kokoro TTS loaded!\n")
+    print("✅ Kokoro TTS loaded!")
 
-    def record_audio(duration=5, sample_rate=16000):
-        """Record audio from microphone."""
-        print(f"🎤 Listening... (speak now, {duration}s)")
-        audio = sd.rec(int(duration * sample_rate), samplerate=sample_rate,
-                      channels=1, dtype='float32')
-        sd.wait()
-        return audio.flatten(), sample_rate
+    print("⏳ Loading Silero VAD model...")
+    vad_session = rt.InferenceSession(str(_base / "silero_vad.onnx"))
+    print("✅ Silero VAD loaded!\n")
+
+    # VAD state — reset before each recording
+    _vad_state = np.zeros((2, 1, 128), dtype=np.float32)
+
+    def _vad_prob(chunk: np.ndarray, sample_rate: int) -> float:
+        """Run one chunk through Silero VAD, return speech probability."""
+        global _vad_state
+        x = chunk.reshape(1, -1).astype(np.float32)
+        sr_arr = np.array(sample_rate, dtype=np.int64)
+        out, state_out = vad_session.run(
+            None,
+            {"input": x, "state": _vad_state, "sr": sr_arr}
+        )
+        _vad_state = state_out
+        return float(out.squeeze())
+
+    def record_audio(
+        sample_rate: int = 16000,
+        chunk_samples: int = 512,        # 32 ms per chunk at 16 kHz
+        speech_threshold: float = 0.5,
+        silence_after_speech: float = 0.8,  # seconds of quiet to stop
+        max_duration: float = 15.0,
+        pre_speech_buffer: int = 8,      # chunks to keep before speech starts
+    ):
+        """Record until the caller stops speaking (Silero VAD turn-taking)."""
+        global _vad_state
+        _vad_state = np.zeros((2, 1, 128), dtype=np.float32)
+
+        silence_chunks_needed = int(silence_after_speech * sample_rate / chunk_samples)
+        max_chunks = int(max_duration * sample_rate / chunk_samples)
+
+        ring_buffer = []      # pre-speech audio kept as a look-back window
+        speech_buffer = []    # confirmed speech audio
+        speech_started = False
+        silence_count = 0
+
+        print("🎤 Listening...")
+
+        with sd.InputStream(samplerate=sample_rate, channels=1,
+                            dtype="float32", blocksize=chunk_samples) as stream:
+            for _ in range(max_chunks):
+                chunk, _ = stream.read(chunk_samples)
+                chunk_1d = chunk.flatten()
+                prob = _vad_prob(chunk_1d, sample_rate)
+
+                if not speech_started:
+                    ring_buffer.append(chunk_1d)
+                    if len(ring_buffer) > pre_speech_buffer:
+                        ring_buffer.pop(0)
+                    if prob >= speech_threshold:
+                        print("🗣️  Speaking...", end="\r")
+                        speech_started = True
+                        speech_buffer.extend(ring_buffer)
+                        speech_buffer.append(chunk_1d)
+                        ring_buffer.clear()
+                        silence_count = 0
+                else:
+                    speech_buffer.append(chunk_1d)
+                    if prob < speech_threshold:
+                        silence_count += 1
+                        if silence_count >= silence_chunks_needed:
+                            break
+                    else:
+                        silence_count = 0
+
+        if not speech_buffer:
+            return np.array([], dtype=np.float32), sample_rate
+
+        return np.concatenate(speech_buffer), sample_rate
 
     def transcribe_audio(audio, sample_rate):
         """Convert speech to text using Whisper."""
@@ -187,8 +253,8 @@ async def run_voice_demo():
 
     while True:
         try:
-            audio, sr = record_audio(duration=6)
-            print("⏳ Transcribing...")
+            audio, sr = record_audio()
+            print("\n⏳ Transcribing...")
             user_text = transcribe_audio(audio, sr)
 
             if not user_text:

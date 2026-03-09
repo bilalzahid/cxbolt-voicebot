@@ -238,13 +238,17 @@ cxbolt-voicebot/
 ├── .env                   # Your credentials (never committed)
 │
 ├── kokoro-v1.0.int8.onnx  # Kokoro TTS model (88MB, not in git)
-└── voices-v1.0.bin        # Kokoro voice embeddings (27MB, not in git)
+├── voices-v1.0.bin        # Kokoro voice embeddings (27MB, not in git)
+└── silero_vad.onnx        # Silero VAD model (2.2MB, not in git)
 ```
 
 > Model files are excluded from git. Download with:
 > ```bash
+> # Kokoro TTS
 > curl -L -o kokoro-v1.0.int8.onnx https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.int8.onnx
 > curl -L -o voices-v1.0.bin https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin
+> # Silero VAD
+> curl -L -o silero_vad.onnx https://github.com/snakers4/silero-vad/raw/master/src/silero_vad/data/silero_vad.onnx
 > ```
 
 ---
